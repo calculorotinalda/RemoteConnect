@@ -1,11 +1,39 @@
-<div align="center">
+# RemoteConnect Pro - Desktop Edition
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Secure, high-performance remote desktop management built with React, Vite, and Electron.
 
-  <h1>Built with AI Studio</h2>
+## 🚀 Como gerar o Executável (.exe)
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+Este projeto está configurado com **Electron** e **electron-builder** para gerar uma aplicação Windows portátil.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+### Pré-requisitos
+* [Node.js](https://nodejs.org/) (Versão 18 ou superior)
+* npm (incluído no Node.js)
 
-</div>
+### Passos para Compilar
+1.  **Clone o repositório:**
+    ```bash
+    git clone <url-do-seu-repositorio>
+    cd remote-connect-desktop
+    ```
+2.  **Instale as dependências:**
+    ```bash
+    npm install
+    ```
+3.  **Gere o executável:**
+    ```bash
+    npm run electron:build
+    ```
+
+O ficheiro `.exe` será gerado na pasta `dist-electron/RemoteConnect Pro.exe`.
+
+## 🛠️ Tecnologias Utilizadas
+* **Frontend:** React + Tailwind CSS + Lucide Icons
+* **Desktop:** Electron
+* **Base de Dados/Sinalização:** Firebase Firestore (WebRTC Signaling)
+* **P2P:** WebRTC para transmissão de ecrã ultra-rápida.
+
+## 🔒 Segurança
+* Ligação P2P encriptada.
+* Suporte para "Unattended Access" (Acesso Não Supervisionado).
+* IPs e sinalização protegidos via Firebase.

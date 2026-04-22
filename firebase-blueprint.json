@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "SignallingSession": {
+      "title": "Signalling Session",
+      "description": "Metadata for WebRTC signalling",
+      "type": "object",
+      "properties": {
+        "offer": { "type": "object" },
+        "answer": { "type": "object" },
+        "hostId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "IceCandidate": {
+      "title": "ICE Candidate",
+      "type": "object",
+      "properties": {
+        "candidate": { "type": "string" },
+        "sdpMid": { "type": "string" },
+        "sdpMLineIndex": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/remote_sessions/{sessionId}": {
+      "schema": "SignallingSession",
+      "description": "Base session for a remote connection"
+    },
+    "/remote_sessions/{sessionId}/callerCandidates/{candidateId}": {
+      "schema": "IceCandidate",
+      "description": "ICE candidates from the host (caller)"
+    },
+    "/remote_sessions/{sessionId}/calleeCandidates/{candidateId}": {
+      "schema": "IceCandidate",
+      "description": "ICE candidates from the viewer (callee)"
+    }
+  }
+}

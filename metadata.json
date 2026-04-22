@@ -1,0 +1,6 @@
+{
+  "name": "RemoteConnect",
+  "description": "Secure, high-performance remote desktop management with military-grade encryption and ultra-low latency.",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": []
+}
