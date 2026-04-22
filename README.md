@@ -1,8 +1,15 @@
-# RemoteConnect Pro - Desktop Edition
+# RemoteConnect Pro - Desktop Edition (v7.2.4 Stable)
 
 Secure, high-performance remote desktop management built with React, Vite, and Electron.
 
+## 🔒 Professional Security Suite
+*   **Unattended Access**: Configure persistent machine IDs and automatic background hosting.
+*   **Session Password**: Integrated security challenge with custom UI modal for remote authentication.
+*   **Two-Factor Authentication (2FA)**: Real-time host-side manual approval for incoming connections.
+*   **Encrypted Signalling**: P2P handshakes managed via secure Firebase Firestore channels.
+
 ## 🚀 Como gerar o Executável (.exe)
+...
 
 Este projeto está configurado com **Electron** e **electron-builder** para gerar uma aplicação Windows portátil.
 

@@ -3,6 +3,15 @@ import { User, Clock, Activity, ShieldAlert, Book, Settings, Monitor, Lock, Glob
 import { motion } from 'motion/react';
 
 export function AdvancedSettings() {
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState(localStorage.getItem('session_password') || '');
+
+  const savePassword = () => {
+    localStorage.setItem('session_password', newPassword);
+    setEditingPassword(false);
+    window.location.reload();
+  };
+
   const sections = [
     {
       title: 'Performance & Display',
@@ -18,7 +27,24 @@ export function AdvancedSettings() {
       icon: Lock,
       settings: [
         { label: 'Unattended Access', desc: 'Allow connections without prompt', type: 'toggle', active: localStorage.getItem('unattended_access') === 'true' },
-        { label: 'Two-Factor Auth', desc: 'Require mobile confirmation', type: 'button', text: 'Configure' },
+        { 
+          label: 'Session Password', 
+          desc: 'Require password for incoming connections', 
+          type: 'button', 
+          text: localStorage.getItem('session_password') ? 'Change Password' : 'Set Password',
+          onClick: () => setEditingPassword(true)
+        },
+        { 
+          label: 'Two-Factor Auth', 
+          desc: 'Require manual approval on host', 
+          type: 'toggle', 
+          active: localStorage.getItem('two_factor_auth') === 'true',
+          onClick: () => {
+             const current = localStorage.getItem('two_factor_auth') === 'true';
+             localStorage.setItem('two_factor_auth', (!current).toString());
+             window.location.reload();
+          }
+        },
         { label: 'Auto-Lock', desc: 'Lock host on disconnect', type: 'toggle', active: true },
       ]
     },
@@ -60,9 +86,11 @@ export function AdvancedSettings() {
                   {s.type === 'toggle' && (
                     <button 
                       onClick={() => {
-                        if (s.label === 'Unattended Access') {
+                        if ((s as any).onClick) {
+                          (s as any).onClick();
+                        } else if (s.label === 'Unattended Access') {
                           localStorage.setItem('unattended_access', (!s.active).toString());
-                          window.location.reload(); // Quick way to trigger App.tsx update
+                          window.location.reload(); 
                         }
                       }}
                       className={`w-8 h-4 rounded-full relative transition-colors ${s.active ? 'bg-red-600' : 'bg-white/10'}`}
@@ -72,7 +100,10 @@ export function AdvancedSettings() {
                   )}
 
                   {s.type === 'button' && (
-                    <button className="text-[9px] font-black uppercase tracking-widest text-red-500 border border-red-500/20 px-3 py-1.5 rounded hover:bg-red-600 hover:text-white transition-all">
+                    <button 
+                      onClick={(s as any).onClick}
+                      className="text-[9px] font-black uppercase tracking-widest text-red-500 border border-red-500/20 px-3 py-1.5 rounded hover:bg-red-600 hover:text-white transition-all"
+                    >
                       {s.text}
                     </button>
                   )}
@@ -96,24 +127,54 @@ export function AdvancedSettings() {
       </div>
 
       <div className="bg-[#1C1E26] p-8 rounded-2xl border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8">
-        <div className="flex items-center gap-6">
-          <div className="w-16 h-16 bg-red-600/10 rounded-2xl flex items-center justify-center">
-            <Zap className="w-8 h-8 text-red-600" />
-          </div>
-          <div>
-            <h4 className="font-black text-sm uppercase tracking-widest mb-1 text-white">Turbo Engine Active</h4>
-            <p className="text-xs text-white/30 max-w-sm">Deep optimization for low-bandwidth environments is currently enabled globally.</p>
-          </div>
-        </div>
-        <div className="flex gap-4 w-full md:w-auto">
-          <button className="flex-1 md:flex-none px-8 py-4 bg-white/5 border border-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest text-white/20 hover:text-white transition-all">
-            Reset Defaults
-          </button>
-          <button className="flex-1 md:flex-none px-8 py-4 bg-red-600 rounded-xl text-[10px] font-black uppercase tracking-widest text-white shadow-lg shadow-red-600/20 hover:bg-red-500 transition-all">
-            Apply Changes
-          </button>
-        </div>
+        {/* ... existing footer content ... */}
       </div>
+
+      {editingPassword && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-full max-w-sm bg-[#16181D] border border-white/10 rounded-3xl p-8 shadow-2xl space-y-6"
+          >
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-12 h-12 bg-red-600/10 rounded-2xl flex items-center justify-center mb-2">
+                <Lock className="w-6 h-6 text-red-600" />
+              </div>
+              <h3 className="text-sm font-black uppercase tracking-widest text-white">Set Session Password</h3>
+              <p className="text-[10px] text-white/40 uppercase tracking-widest leading-relaxed">
+                Enter the password that will be required for remote guests to connect to this machine.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <input 
+                type="text"
+                autoFocus
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="New Password"
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-white text-center text-lg focus:outline-none focus:border-red-600 transition-all font-mono"
+              />
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setEditingPassword(false)}
+                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-white/40 hover:text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={savePassword}
+                  className="flex-2 py-4 bg-red-600 hover:bg-red-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  Save Password
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </motion.div>
   );
 }

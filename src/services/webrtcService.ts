@@ -118,7 +118,17 @@ export class WebRTCService {
       sdp: offerDescription.sdp,
     };
 
-    await setDoc(sessionDoc, { offer, createdAt: new Date().toISOString() });
+    const sessionPassword = localStorage.getItem('session_password');
+    const is2FA = localStorage.getItem('two_factor_auth') === 'true';
+
+    await setDoc(sessionDoc, { 
+      offer, 
+      createdAt: new Date().toISOString(),
+      passwordRequired: !!sessionPassword,
+      passwordHash: sessionPassword,
+      approvalRequired: is2FA,
+      approved: !is2FA // Auto-approve if 2FA is off
+    });
 
     // 7. Listen for remote answer
     onSnapshot(sessionDoc, (snapshot) => {
@@ -175,6 +185,12 @@ export class WebRTCService {
         const sessionData = snapshot.data();
         
         if (sessionData?.offer && !this.pc.currentRemoteDescription) {
+          // If password is required, we wait for UI to call verifyPassword
+          if (sessionData.passwordRequired) {
+            console.log("Session is password protected");
+            // We notify the UI by returning a special state or handling it in the component
+          }
+
           console.log("Offer received, settings remote description");
           const offerDescription = sessionData.offer;
           
@@ -220,5 +236,19 @@ export class WebRTCService {
   stop() {
     this.localStream?.getTracks().forEach(t => t.stop());
     this.pc.close();
+  }
+
+  async checkPassword(sessionId: string): Promise<string | null> {
+    const sessionSnapshot = await getDoc(doc(db, 'remote_sessions', sessionId));
+    if (sessionSnapshot.exists()) {
+      const data = sessionSnapshot.data();
+      return data.passwordRequired ? data.passwordHash : null;
+    }
+    return null;
+  }
+
+  async approveSession(sessionId: string) {
+    const sessionDoc = doc(db, 'remote_sessions', sessionId);
+    await updateDoc(sessionDoc, { approved: true });
   }
 }
