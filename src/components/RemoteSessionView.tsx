@@ -48,16 +48,22 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
     const setupSession = async () => {
       try {
         if (isHost) {
-          setConnectionStatus('Waiting for screen capture permission...');
+          setConnectionStatus('Aguardando permissão de captura...');
           const stream = await service.startHosting(remoteId, (remoteStream) => {
-             // ...
+             // Host receiving viewer's stream (if any)
+          }).catch(err => {
+            if (err.name === 'NotAllowedError' || err.name === 'NotSupportedError' || err.message.includes('not supported')) {
+              throw new Error('Captura de ecrã bloqueada. Abre a app numa NOVA ABA para permitir.');
+            }
+            throw err;
           });
+          
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            setConnectionStatus('Broadcasting screen...');
+            setConnectionStatus('Transmissão ativa...');
             setIsConnecting(false);
 
-            // Listen for viewer signals to show approval popup if 2FA is on
+            // Ouvir pedidos de 2FA se ativo
             if (localStorage.getItem('two_factor_auth') === 'true') {
                onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
                  const data = snap.data();
@@ -68,40 +74,49 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
             }
           }
         } else {
-          setConnectionStatus('Searching for remote host...');
+          setConnectionStatus('À procura do computador remoto...');
           
-          // Check for password requirement first
+          // Verificar password primeiro
           const requiredPassword = await service.checkPassword(remoteId);
           if (requiredPassword) {
             setPasswordRequired(true);
-            setConnectionStatus('Session Encrypted - Enter Password');
-            return; 
+            setConnectionStatus('Sessão Encriptada - Introduza Password');
+          } else {
+            // Sem password, iniciar fluxo normal
+            initiateViewerFlow();
           }
-
-          // Check for 2FA approval
-          onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
-            const data = snap.data();
-            if (data?.approvalRequired && !data.approved) {
-              setIsApproved(false);
-              setConnectionStatus('Awaiting Host Approval (2FA)...');
-            } else if (data?.approved) {
-              setIsApproved(true);
-            }
-          });
-
-          await startViewingSession();
         }
       } catch (err) {
         console.error("Session failed:", err);
-        setConnectionStatus('Error: ' + (err as Error).message);
-        setTimeout(onClose, 3000);
+        setConnectionStatus('Erro: ' + (err as Error).message);
+        setTimeout(onClose, 4000);
       }
     };
 
+    const initiateViewerFlow = () => {
+      // Monitorar estado 2FA e ICE
+      onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
+        const data = snap.data();
+        if (data?.approvalRequired && !data.approved) {
+          setIsApproved(false);
+          setConnectionStatus('Aguardando aprovação do Host (2FA)...');
+        } else if (data?.approved) {
+          setIsApproved(true);
+          // O status será mudado pelo callback do stream ou ICE
+        }
+      });
+
+      startViewingSession();
+    };
+
     setupSession();
+    
+    // Hack para expor initiateViewerFlow para o handleUnlock
+    (window as any)._initiateViewer = initiateViewerFlow;
 
     return () => {
       service.stop();
+      delete (window as any)._initiateViewer;
     };
   }, [remoteId, isHost, onClose]);
 
@@ -109,7 +124,7 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
     if (!rtcServiceRef.current) return;
     
     setIsConnecting(true);
-    setConnectionStatus('Synchronizing P2P tunnel...');
+    setConnectionStatus('Sincronizando túnel P2P...');
     
     try {
       await rtcServiceRef.current.startViewing(remoteId, (remoteStream) => {
@@ -118,11 +133,12 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
           videoRef.current.srcObject = remoteStream;
           videoRef.current.play().catch(e => console.error("Video play failed:", e));
           setIsConnecting(false);
+          setConnectionStatus('Ligação estabelecida');
         }
       });
     } catch (err) {
       console.error("Viewing failed:", err);
-      setConnectionStatus('Connection lost');
+      setConnectionStatus('A ligação falhou');
       setTimeout(onClose, 3000);
     }
   };
@@ -134,7 +150,9 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
     if (passwordInput === correctHash) {
       setPasswordRequired(false);
       setPasswordError(false);
-      startViewingSession();
+      if ((window as any)._initiateViewer) {
+        (window as any)._initiateViewer();
+      }
     } else {
       setPasswordError(true);
       setTimeout(() => setPasswordError(false), 2000);

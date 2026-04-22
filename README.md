@@ -3,10 +3,14 @@
 Secure, high-performance remote desktop management built with React, Vite, and Electron.
 
 ## 🔒 Professional Security Suite
-*   **Unattended Access**: Configure persistent machine IDs and automatic background hosting.
+*   **Unattended Access**: Configure persistent machine IDs and automatic background hosting (auto-starts only on app launch).
 *   **Session Password**: Integrated security challenge with custom UI modal for remote authentication.
 *   **Two-Factor Authentication (2FA)**: Real-time host-side manual approval for incoming connections.
-*   **Encrypted Signalling**: P2P handshakes managed via secure Firebase Firestore channels.
+*   **Encrypted Signalling**: P2P handshakes managed via secure Firebase Firestore channels with ICE candidate queuing.
+
+## 🛠️ Troubleshooting (Web Version)
+*   **"Not Supported" Error**: Screen capture is often blocked in iframes. Always open the app in a **New Tab** to enable Hosting.
+*   **Stuck on Synchronizing**: Ensure both peers are in a secure context (HTTPS) and that your browser allows Autoplay for the video stream (the app starts muted by default to help with this).
 
 ## 🚀 Como gerar o Executável (.exe)
 ...

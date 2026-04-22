@@ -19,34 +19,32 @@ export default function App() {
   const myCurrentIdRef = useRef<string>('');
 
   // Handle automatic hosting if "Unattended" is enabled in settings
-  // For the demo, we simulate the auto-activation
   useEffect(() => {
-    const checkUnattended = () => {
-      // In a real app we would read from localStorage
-      const saved = localStorage.getItem('unattended_access') === 'true';
-      setIsUnattendedActive(saved);
+    const isUnattended = localStorage.getItem('unattended_access') === 'true';
+    setIsUnattendedActive(isUnattended);
+
+    // Only auto-start on fresh application load (sessionStorage used as a flag)
+    const hasAutoStarted = sessionStorage.getItem('auto_started') === 'true';
+    
+    if (isUnattended && !activeSession && !hasAutoStarted) {
+      sessionStorage.setItem('auto_started', 'true');
       
-      if (saved && !activeSession) {
-         let id = localStorage.getItem('persistent_id');
-         if (!id) {
-           const part1 = Math.floor(Math.random() * 900 + 100);
-           const part2 = Math.floor(Math.random() * 900 + 100);
-           const part3 = Math.floor(Math.random() * 900 + 100);
-           id = `${part1}${part2}${part3}`;
-           localStorage.setItem('persistent_id', id);
-         }
-         myCurrentIdRef.current = id;
-         
-         // In a real desktop app, we start hosting immediately
-         // We do a small delay to ensure UI is ready
-         const timer = setTimeout(() => {
-            startSession(id!, true);
-         }, 1000);
-         return () => clearTimeout(timer);
+      let id = localStorage.getItem('persistent_id');
+      if (!id) {
+        const part1 = Math.floor(Math.random() * 900 + 100);
+        const part2 = Math.floor(Math.random() * 900 + 100);
+        const part3 = Math.floor(Math.random() * 900 + 100);
+        id = `${part1}${part2}${part3}`;
+        localStorage.setItem('persistent_id', id);
       }
-    };
-    checkUnattended();
-  }, [activeSession]);
+      myCurrentIdRef.current = id;
+      
+      const timer = setTimeout(() => {
+         startSession(id!, true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []); // Only run on mount
 
   const startSession = (id: string, isHost: boolean = false) => {
     setActiveSession({ id, isHost });
