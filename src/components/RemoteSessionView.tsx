@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Maximize2, Keyboard, MousePointer2, MessageSquare, Shield, Info, Send, FileUp, Paperclip, Loader2, Monitor } from 'lucide-react';
+import { X, Maximize2, Keyboard, MousePointer2, MessageSquare, Shield, Info, Send, FileUp, Paperclip, Loader2, Monitor, Lock, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WebRTCService } from '../services/webrtcService';
-import { db } from '../lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { db, validateFirestoreConnection } from '../lib/firebase';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 interface Message {
   id: string;
@@ -31,88 +31,177 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
   const [inputText, setInputText] = useState('');
   const [transfers, setTransfers] = useState<TransferFile[]>([]);
   const [isConnecting, setIsConnecting] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState('Initializing...');
+  const [connectionStatus, setConnectionStatus] = useState('A iniciar...');
+  const [hasError, setHasError] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   const [isApproved, setIsApproved] = useState(true);
   const [hasNewRequest, setHasNewRequest] = useState(false);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const rtcServiceRef = useRef<WebRTCService | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const video = videoRef.current;
+    if (video && activeStream) {
+      if (video.srcObject !== activeStream) {
+        console.log("Attaching stream to video element:", activeStream.id, "tracks:", activeStream.getTracks().length);
+        video.srcObject = activeStream;
+      }
+      
+      const playVideo = async () => {
+        try {
+          await video.play();
+        } catch (e: any) {
+          if (e.name !== 'AbortError') {
+            console.warn("Video play failed:", e);
+          }
+        }
+      };
+      
+      playVideo();
+    }
+  }, [activeStream]);
+
+  const [trackUpdate, setTrackUpdate] = useState(0);
+  useEffect(() => {
+    if (activeStream) {
+      const handler = () => {
+        console.log("Stream tracks changed, updating UI...");
+        setTrackUpdate(prev => prev + 1);
+      };
+      activeStream.onaddtrack = handler;
+      activeStream.onremovetrack = handler;
+      return () => {
+        activeStream.onaddtrack = null;
+        activeStream.onremovetrack = null;
+      };
+    }
+  }, [activeStream]);
+
+  const onStateChange = (state: string) => {
+    console.log("WebRTC State Change:", state);
+    
+    if (state === 'connected' || state === 'ice:connected') {
+      setConnectionStatus('Ligação estabelecida!');
+      setIsConnecting(false);
+    } else if (state === 'connecting' || state === 'ice:checking') {
+      setConnectionStatus('A estabelecer túnel seguro...');
+    } else if (state === 'failed' || state === 'disconnected' || state === 'ice:failed') {
+      setConnectionStatus('Ligação interrompida. Verifique a rede.');
+      setHasError(true);
+    } else if (state.startsWith('ice:')) {
+      const iceState = state.split(':')[1];
+      if (iceState === 'checking') {
+         setConnectionStatus('A procurar melhor rota de rede (ICE)...');
+      } else if (iceState === 'connected') {
+         setConnectionStatus('Rota de rede encontrada!');
+         setIsConnecting(false);
+      } else if (iceState === 'failed') {
+         setConnectionStatus('Falha na rota P2P. Tente em nova aba.');
+         setHasError(true);
+      }
+    }
+  };
+
+  const setupSession = async () => {
+    if (!rtcServiceRef.current) return;
+    const service = rtcServiceRef.current;
+    
+    setHasError(false);
+    try {
+      setConnectionStatus('A verificar ligação...');
+      await validateFirestoreConnection();
+
+      if (isHost) {
+        // Pre-initialize session doc so viewer knows we are here
+        await setDoc(doc(db, 'remote_sessions', remoteId), {
+          status: 'initializing',
+          hostPresent: true,
+          createdAt: new Date().toISOString()
+        }, { merge: true });
+
+        setConnectionStatus('Aguardando permissão de captura (Clique para permitir se necessário)...');
+        
+        const stream = await service.startHosting(remoteId, (rs) => {
+           // Host receiving viewer's stream (if any)
+        }, onStateChange).catch(err => {
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            throw new Error('Permissão de captura negada. Clique no botão de host novamente.');
+          }
+          if (err.name === 'InvalidStateError' || err.message.includes('gesture')) {
+            throw new Error('A captura requer um clique manual por segurança. Tente novamente.');
+          }
+          throw err;
+        });
+        
+        setActiveStream(stream);
+        setConnectionStatus('Transmissão ativa...');
+        setIsConnecting(false);
+
+        onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data?.answer && !data.approved && localStorage.getItem('two_factor_auth') === 'true') {
+              setHasNewRequest(true);
+            }
+          }
+        });
+      } else {
+        setConnectionStatus('A conectar ao PC remoto...');
+        
+        // Tenta carregar a password, mas não desiste se falhar por "offline" inicial
+        let requiredPassword = false;
+        try {
+          const pwd = await service.checkPassword(remoteId);
+          requiredPassword = !!pwd;
+        } catch (e) {
+          console.warn("Check password falhou (possível delay de rede), a tentar viewer flow...");
+        }
+
+        if (requiredPassword) {
+          setPasswordRequired(true);
+          setConnectionStatus('Sessão Encriptada - Introduza Password');
+        } else {
+          initiateViewerFlow(onStateChange);
+        }
+      }
+    } catch (err: any) {
+      console.error("Session failed:", err);
+      const errorMsg = err.message || 'Erro de rede ou permissão';
+      setConnectionStatus('Aviso: ' + errorMsg);
+      setHasError(true);
+      
+      // Se for erro de permissão de ecrã, fechamos. Se for rede, deixamos o Firebase tentar.
+      if (errorMsg.includes('Captura')) {
+        setTimeout(onClose, 5000);
+      }
+    }
+  };
+
+  const initiateViewerFlow = (onState: (state: string) => void) => {
+    onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
+      const data = snap.data();
+      if (data?.approvalRequired && !data.approved) {
+        setIsApproved(false);
+        setConnectionStatus('Aguardando aprovação do Host (2FA)...');
+      } else if (data?.approved) {
+        setIsApproved(true);
+      }
+    });
+
+    startViewingSession(onState);
+  };
+
+  useEffect(() => {
     const service = new WebRTCService();
     rtcServiceRef.current = service;
-
-    const setupSession = async () => {
-      try {
-        if (isHost) {
-          setConnectionStatus('Aguardando permissão de captura...');
-          const stream = await service.startHosting(remoteId, (remoteStream) => {
-             // Host receiving viewer's stream (if any)
-          }).catch(err => {
-            if (err.name === 'NotAllowedError' || err.name === 'NotSupportedError' || err.message.includes('not supported')) {
-              throw new Error('Captura de ecrã bloqueada. Abre a app numa NOVA ABA para permitir.');
-            }
-            throw err;
-          });
-          
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            setConnectionStatus('Transmissão ativa...');
-            setIsConnecting(false);
-
-            // Ouvir pedidos de 2FA se ativo
-            if (localStorage.getItem('two_factor_auth') === 'true') {
-               onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
-                 const data = snap.data();
-                 if (data?.answer && !data.approved) {
-                   setHasNewRequest(true);
-                 }
-               });
-            }
-          }
-        } else {
-          setConnectionStatus('À procura do computador remoto...');
-          
-          // Verificar password primeiro
-          const requiredPassword = await service.checkPassword(remoteId);
-          if (requiredPassword) {
-            setPasswordRequired(true);
-            setConnectionStatus('Sessão Encriptada - Introduza Password');
-          } else {
-            // Sem password, iniciar fluxo normal
-            initiateViewerFlow();
-          }
-        }
-      } catch (err) {
-        console.error("Session failed:", err);
-        setConnectionStatus('Erro: ' + (err as Error).message);
-        setTimeout(onClose, 4000);
-      }
-    };
-
-    const initiateViewerFlow = () => {
-      // Monitorar estado 2FA e ICE
-      onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
-        const data = snap.data();
-        if (data?.approvalRequired && !data.approved) {
-          setIsApproved(false);
-          setConnectionStatus('Aguardando aprovação do Host (2FA)...');
-        } else if (data?.approved) {
-          setIsApproved(true);
-          // O status será mudado pelo callback do stream ou ICE
-        }
-      });
-
-      startViewingSession();
-    };
-
+    
     setupSession();
     
-    // Hack para expor initiateViewerFlow para o handleUnlock
-    (window as any)._initiateViewer = initiateViewerFlow;
+    (window as any)._initiateViewer = (onState: any) => initiateViewerFlow(onState || onStateChange);
 
     return () => {
       service.stop();
@@ -120,26 +209,25 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
     };
   }, [remoteId, isHost, onClose]);
 
-  const startViewingSession = async () => {
+  const startViewingSession = async (onStateChange?: (state: string) => void) => {
     if (!rtcServiceRef.current) return;
     
     setIsConnecting(true);
-    setConnectionStatus('Sincronizando túnel P2P...');
+    setConnectionStatus('A aguardar sinal do computador remoto...');
     
     try {
-      await rtcServiceRef.current.startViewing(remoteId, (remoteStream) => {
-        console.log("Stream received in view component:", remoteStream);
-        if (videoRef.current) {
-          videoRef.current.srcObject = remoteStream;
-          videoRef.current.play().catch(e => console.error("Video play failed:", e));
-          setIsConnecting(false);
-          setConnectionStatus('Ligação estabelecida');
-        }
-      });
+      await rtcServiceRef.current.startViewing(remoteId, (stream) => {
+        console.log("Stream received in view component:", stream.id, "tracks:", stream.getTracks().length);
+        setActiveStream(stream);
+        setIsConnecting(false);
+        setConnectionStatus('Ligação ativa!');
+      }, onStateChange);
+      
+      setConnectionStatus('Sincronizando túnel P2P...');
     } catch (err) {
       console.error("Viewing failed:", err);
-      setConnectionStatus('A ligação falhou');
-      setTimeout(onClose, 3000);
+      setConnectionStatus('Erro na sincronização. Tente de novo.');
+      setHasError(true);
     }
   };
 
@@ -262,112 +350,139 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
             layout
             className="relative w-full max-w-6xl aspect-video bg-[#16181D] rounded-xl shadow-2xl border border-white/5 overflow-hidden flex items-center justify-center"
           >
-            {isConnecting && !passwordRequired && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
-                <Loader2 className="w-10 h-10 text-red-600 animate-spin mb-4" />
-                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">{connectionStatus}</span>
-              </div>
-            )}
-
-            {!isApproved && !isHost && (
-              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#0F1115] backdrop-blur-md">
-                <div className="flex flex-col items-center text-center space-y-4">
-                  <div className="w-16 h-16 bg-blue-600/10 rounded-full flex items-center justify-center animate-pulse">
-                    <Shield className="w-8 h-8 text-blue-500" />
-                  </div>
-                  <h3 className="text-sm font-black uppercase tracking-widest text-white">Identity Verification</h3>
-                  <p className="text-[10px] text-white/40 uppercase tracking-widest leading-relaxed max-w-xs">
-                    Two-Factor Authentication is active. The remote administrator must manually approve your connection request.
-                  </p>
-                  <div className="mt-4 flex gap-4">
-                    <button onClick={onClose} className="px-6 py-2 bg-white/5 rounded-lg text-[9px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {isHost && hasNewRequest && (
-               <div className="absolute top-8 left-1/2 -translate-x-1/2 z-[200] w-full max-w-md">
-                 <motion.div 
-                   initial={{ y: -100, opacity: 0 }}
-                   animate={{ y: 0, opacity: 1 }}
-                   className="bg-[#1C1E26] border border-red-600/30 p-6 rounded-3xl shadow-[0_0_50px_rgba(220,38,38,0.2)] flex items-center justify-between gap-6"
-                 >
-                   <div className="flex items-center gap-4">
-                     <div className="w-12 h-12 bg-red-600/10 rounded-2xl flex items-center justify-center">
-                       <Monitor className="w-6 h-6 text-red-600" />
-                     </div>
-                     <div className="flex flex-col">
-                       <span className="text-[9px] font-black uppercase tracking-widest text-red-500 mb-1">Incoming 2FA Request</span>
-                       <span className="text-xs font-bold text-white">Administrator is requesting remote access</span>
-                     </div>
-                   </div>
-                   <div className="flex gap-2">
-                     <button 
-                       onClick={onClose}
-                       className="p-3 bg-white/5 hover:bg-white/10 rounded-xl text-white/50 hover:text-white transition-all"
-                     >
-                        <X className="w-4 h-4" />
-                     </button>
-                     <button 
-                       onClick={async () => {
-                         if (rtcServiceRef.current) {
-                           await rtcServiceRef.current.approveSession(remoteId);
-                           setHasNewRequest(false);
-                         }
-                       }}
-                       className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                     >
-                       Approve
-                     </button>
-                   </div>
-                 </motion.div>
-               </div>
-            )}
-
-            {passwordRequired && (
-              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#0F1115] backdrop-blur-md">
-                <div className="w-full max-w-sm p-8 bg-[#16181D] rounded-3xl border border-white/5 shadow-2xl space-y-6">
-                  <div className="flex flex-col items-center text-center space-y-2">
-                    <div className="w-12 h-12 bg-red-600/10 rounded-2xl flex items-center justify-center mb-2">
-                      <Shield className="w-6 h-6 text-red-600" />
+            {/* Overlays de Segurança e Estado - Sempre no topo (z-index alto e no final) */}
+            <AnimatePresence>
+              {isHost && hasNewRequest && (
+                <div className="absolute top-8 left-1/2 -translate-x-1/2 z-[200] w-full max-w-md">
+                  <motion.div 
+                    initial={{ y: -100, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -100, opacity: 0 }}
+                    className="bg-[#1C1E26] border border-red-600/30 p-6 rounded-3xl shadow-[0_0_50px_rgba(220,38,38,0.2)] flex items-center justify-between gap-6"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-red-600/10 rounded-2xl flex items-center justify-center">
+                        <Monitor className="w-6 h-6 text-red-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-red-500 mb-1">Pedido de Acesso 2FA</span>
+                        <span className="text-xs font-bold text-white">Alguém está a tentar ligar-se</span>
+                      </div>
                     </div>
-                    <h3 className="text-sm font-black uppercase tracking-widest text-white">Security Challenge</h3>
-                    <p className="text-[10px] text-white/40 uppercase tracking-widest leading-relaxed">
-                      This session is protected. Please enter the password to establish the P2P tunnel.
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <input 
-                      type="password"
-                      autoFocus
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-                      placeholder="••••••••"
-                      className={`w-full bg-white/5 border ${passwordError ? 'border-red-500 animate-shake' : 'border-white/10'} rounded-2xl px-6 py-4 text-center text-white text-xl tracking-[0.5em] focus:outline-none focus:border-red-600 transition-all`}
-                    />
-                    
-                    <button 
-                      onClick={handleUnlock}
-                      className="w-full py-4 bg-red-600 hover:bg-red-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all"
-                    >
-                      Unlock Session
-                    </button>
-                    
-                    <button 
-                      onClick={onClose}
-                      className="w-full py-2 text-[9px] font-black uppercase tracking-widest text-white/20 hover:text-white transition-colors"
-                    >
-                      Cancel Connection
-                    </button>
-                  </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => setHasNewRequest(false)}
+                        className="p-3 bg-white/5 hover:bg-white/10 rounded-xl text-white/50 hover:text-white transition-all"
+                      >
+                         <X className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          if (rtcServiceRef.current) {
+                            await rtcServiceRef.current.approveSession(remoteId);
+                            setHasNewRequest(false);
+                          }
+                        }}
+                        className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                      >
+                        Aprovar
+                      </button>
+                    </div>
+                  </motion.div>
                 </div>
-              </div>
-            )}
+              )}
+
+              {isConnecting && !passwordRequired && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm"
+                >
+                  <Loader2 className="w-10 h-10 text-red-600 animate-spin mb-4" />
+                  <div className="flex flex-col items-center gap-4">
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">{connectionStatus}</span>
+                    {hasError && (
+                      <button 
+                        onClick={() => setupSession()}
+                        className="px-6 py-2 bg-white/5 border border-white/10 rounded-lg text-[9px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-colors"
+                      >
+                        Tentar Novamente
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {passwordRequired && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="absolute inset-0 z-[110] flex flex-col items-center justify-center bg-[#0F1115] backdrop-blur-md"
+                >
+                  <div className="w-full max-w-sm p-8 bg-[#16181D] rounded-3xl border border-white/5 shadow-2xl space-y-6">
+                    <div className="flex flex-col items-center text-center space-y-2">
+                      <div className="w-12 h-12 bg-red-600/10 rounded-2xl flex items-center justify-center mb-2">
+                        <Lock className="w-6 h-6 text-red-600" />
+                      </div>
+                      <h3 className="text-sm font-black uppercase tracking-widest text-white">Desafio de Segurança</h3>
+                      <p className="text-[10px] text-white/40 uppercase tracking-widest leading-relaxed">
+                        Esta sessão está protegida por encriptação. Introduza a password do computador remoto para aceder.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <input 
+                        type="password"
+                        autoFocus
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+                        placeholder="••••••••"
+                        className={`w-full bg-white/5 border ${passwordError ? 'border-red-500 animate-shake' : 'border-white/10'} rounded-2xl px-6 py-4 text-center text-white text-xl tracking-[0.5em] focus:outline-none focus:border-red-600 transition-all`}
+                      />
+                      
+                      <button 
+                        onClick={handleUnlock}
+                        className="w-full py-4 bg-red-600 hover:bg-red-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all"
+                      >
+                        Desbloquear Sessão
+                      </button>
+                      
+                      <button 
+                        onClick={onClose}
+                        className="w-full py-2 text-[9px] font-black uppercase tracking-widest text-white/20 hover:text-white transition-colors"
+                      >
+                        Cancelar Ligação
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {!isApproved && !isHost && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="absolute inset-0 z-[120] flex flex-col items-center justify-center bg-[#0F1115] backdrop-blur-md"
+                >
+                  <div className="flex flex-col items-center text-center space-y-4">
+                    <div className="w-16 h-16 bg-blue-600/10 rounded-full flex items-center justify-center animate-pulse">
+                      <Shield className="w-8 h-8 text-blue-500" />
+                    </div>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-white">Verificação de Identidade</h3>
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest leading-relaxed max-w-xs">
+                      A Autenticação de Dois Fatores (2FA) está ativa. O administrador remoto deve aprovar manualmente o seu pedido.
+                    </p>
+                    <div className="mt-4 flex gap-4">
+                      <button onClick={onClose} className="px-6 py-2 bg-white/5 rounded-lg text-[9px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors">
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
             
             <video 
               ref={videoRef}
@@ -375,23 +490,66 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
               playsInline
               // Mute by default to ensure browser allows autoplay
               muted
-              className={`w-full h-full object-contain ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
+              onLoadedMetadata={() => videoRef.current?.play()}
+              className={`w-full h-full object-contain bg-[#0a0a0a] ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
             />
 
+            {activeStream && activeStream.getTracks().length === 0 && !isConnecting && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="px-6 py-3 bg-yellow-600/20 border border-yellow-600/50 backdrop-blur-md rounded-xl">
+                  <span className="text-xs font-black uppercase tracking-widest text-white animate-pulse">Sem sinal de vídeo. A aguardar Host...</span>
+                </div>
+              </div>
+            )}
+
             {!isHost && !isConnecting && (
-              <motion.div 
-                animate={{ x: [100, 400, 200, 500], y: [100, 200, 300, 100] }}
-                transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                className="absolute z-10 pointer-events-none"
-              >
-                <MousePointer2 className="w-5 h-5 text-white drop-shadow-lg fill-black" />
-              </motion.div>
+              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-50">
+                <button 
+                  onClick={async () => {
+                    if (videoRef.current && activeStream) {
+                      try {
+                        if (isHost && rtcServiceRef.current) {
+                          // For host, try to re-capture
+                          const stream = await rtcServiceRef.current.startHosting(remoteId, () => {}, onStateChange);
+                          setActiveStream(stream);
+                        } else {
+                          const src = videoRef.current.srcObject;
+                          videoRef.current.srcObject = null;
+                          // Wait a tick and restore
+                          setTimeout(async () => {
+                            if (videoRef.current) {
+                              videoRef.current.srcObject = src;
+                              try {
+                                await videoRef.current.play();
+                              } catch (e: any) {
+                                if (e.name !== 'AbortError') console.warn("Restore play failed:", e);
+                              }
+                            }
+                          }, 100);
+                        }
+                      } catch (e: any) {
+                        console.warn("Manual reload failed:", e);
+                      }
+                    }
+                  }}
+                  className="px-4 py-1.5 bg-black/40 hover:bg-black/60 border border-white/5 rounded-full text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-all backdrop-blur-sm"
+                >
+                  {isHost ? 'Problemas na captura? Clique para reiniciar' : 'Imagem preta? Clique para recarregar vídeo'}
+                </button>
+              </div>
+            )}
+
+            {!isConnecting && !isHost && activeStream && activeStream.getTracks().some(t => t.kind === 'video' && t.enabled) && (
+              <div key={trackUpdate} className="absolute top-20 right-8 z-50 flex items-center gap-2 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+                <span className="text-[8px] font-black uppercase tracking-tighter text-green-500">Sinal de Vídeo OK</span>
+              </div>
             )}
 
             {isHost && !isConnecting && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="px-6 py-3 bg-red-600/20 border border-red-600/50 backdrop-blur-md rounded-xl">
-                    <span className="text-xs font-black uppercase tracking-widest text-white">Your screen is being shared in real-time</span>
+                    <span className="text-xs font-black uppercase tracking-widest text-white">O seu ecrã está a ser partilhado em tempo real</span>
                 </div>
               </div>
             )}
@@ -505,14 +663,5 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
         </div>
       </footer>
     </motion.div>
-  );
-}
-
-function CheckCircle2({ className }: { className?: string }) {
-  return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-      <polyline points="22 4 12 14.01 9 11.01"/>
-    </svg>
   );
 }

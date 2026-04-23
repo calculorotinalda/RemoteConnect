@@ -5,6 +5,7 @@ import { motion } from 'motion/react';
 interface DeviceRowProps {
   device: Device;
   onConnect: () => void;
+  key?: any;
 }
 
 export default function DeviceRow({ device, onConnect }: DeviceRowProps) {

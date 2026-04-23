@@ -13,11 +13,15 @@ service cloud.firestore {
       allow get, list, create, update: if true; // Public for signalling purposes based on ID
       
       match /callerCandidates/{id} {
-        allow read, write: if true;
+        allow read, create: if true;
       }
       match /calleeCandidates/{id} {
-        allow read, write: if true;
+        allow read, create: if true;
       }
+    }
+
+    match /_internal_/health_check {
+      allow get: if true;
     }
   }
 }
