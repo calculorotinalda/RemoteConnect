@@ -46,22 +46,39 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
   useEffect(() => {
     const video = videoRef.current;
     if (video && activeStream) {
+      console.log("Attaching stream to video element:", activeStream.id, "tracks:", activeStream.getTracks().map(t => `${t.kind}:${t.readyState}`));
+      
+      // Ensure video is configured for auto-play
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      
+      // Re-assignment logic
       if (video.srcObject !== activeStream) {
-        console.log("Attaching stream to video element:", activeStream.id, "tracks:", activeStream.getTracks().length);
         video.srcObject = activeStream;
       }
       
-      const playVideo = async () => {
+      const attemptPlay = async () => {
         try {
           await video.play();
+          console.log("Video play triggered successfully");
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            console.warn("Video play failed:", e);
+            console.warn("Play failed:", e.message);
+            // Retry once after interaction
           }
         }
       };
       
-      playVideo();
+      attemptPlay();
+      
+      // Handle unmute events at component level too
+      activeStream.getTracks().forEach(track => {
+        track.onunmute = () => {
+          console.log("Track unmuted in component, triggering play...");
+          attemptPlay();
+        };
+      });
     }
   }, [activeStream]);
 
@@ -502,47 +519,59 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
               </div>
             )}
 
-            {!isHost && !isConnecting && (
-              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-50">
+            {!isConnecting && (
+              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-3">
+                {activeStream && activeStream.getTracks().length === 0 && (
+                   <div className="px-4 py-2 bg-red-500/20 border border-red-500/50 backdrop-blur-md rounded-lg mb-2">
+                     <span className="text-[10px] font-bold text-white uppercase tracking-wider">A aguardar fluxo de dados do remoto...</span>
+                   </div>
+                )}
                 <button 
                   onClick={async () => {
-                    if (videoRef.current && activeStream) {
+                    const video = videoRef.current;
+                    if (video && activeStream) {
                       try {
-                        if (isHost && rtcServiceRef.current) {
-                          // For host, try to re-capture
-                          const stream = await rtcServiceRef.current.startHosting(remoteId, () => {}, onStateChange);
-                          setActiveStream(stream);
-                        } else {
-                          const src = videoRef.current.srcObject;
-                          videoRef.current.srcObject = null;
-                          // Wait a tick and restore
-                          setTimeout(async () => {
-                            if (videoRef.current) {
-                              videoRef.current.srcObject = src;
-                              try {
-                                await videoRef.current.play();
-                              } catch (e: any) {
-                                if (e.name !== 'AbortError') console.warn("Restore play failed:", e);
-                              }
+                        console.log("Manual video pulse triggered...");
+                        // Hard reset of srcObject
+                        const stream = video.srcObject as MediaStream;
+                        video.srcObject = null;
+                        
+                        setTimeout(async () => {
+                          if (video) {
+                            video.srcObject = stream;
+                            try {
+                              await video.play();
+                              console.log("Pulse play success");
+                            } catch (e) {
+                              console.warn("Pulse play failed:", e);
                             }
-                          }, 100);
+                          }
+                        }, 50);
+
+                        if (isHost && rtcServiceRef.current) {
+                           // Try to re-detect tracks
+                           setTrackUpdate(prev => prev + 1);
                         }
                       } catch (e: any) {
                         console.warn("Manual reload failed:", e);
                       }
+                    } else if (hasError) {
+                      setupSession();
                     }
                   }}
-                  className="px-4 py-1.5 bg-black/40 hover:bg-black/60 border border-white/5 rounded-full text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-all backdrop-blur-sm"
+                  className="px-4 py-1.5 bg-black/60 hover:bg-black/80 border border-white/10 rounded-full text-[10px] font-black uppercase tracking-widest text-white/60 hover:text-white transition-all backdrop-blur-md shadow-lg"
                 >
-                  {isHost ? 'Problemas na captura? Clique para reiniciar' : 'Imagem preta? Clique para recarregar vídeo'}
+                  {hasError ? 'Tentar Reconectar' : (isHost ? 'Reiniciar Captura Local' : 'Imagem preta? Clique para Recarregar')}
                 </button>
               </div>
             )}
 
-            {!isConnecting && !isHost && activeStream && activeStream.getTracks().some(t => t.kind === 'video' && t.enabled) && (
+            {!isConnecting && activeStream && activeStream.getTracks().some(t => t.kind === 'video' && t.enabled) && (
               <div key={trackUpdate} className="absolute top-20 right-8 z-50 flex items-center gap-2 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full">
                 <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
-                <span className="text-[8px] font-black uppercase tracking-tighter text-green-500">Sinal de Vídeo OK</span>
+                <span className="text-[8px] font-black uppercase tracking-tighter text-green-500">
+                  {isHost ? 'A Emitir Sinal OK' : 'Sinal de Vídeo Recebido'}
+                </span>
               </div>
             )}
 

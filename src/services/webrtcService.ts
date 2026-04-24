@@ -170,11 +170,14 @@ export class WebRTCService {
         video: { 
           cursor: "always",
           displaySurface: "monitor",
-          frameRate: { ideal: 30 }
+          frameRate: { ideal: 30, max: 60 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         } as any,
         audio: {
           echoCancellation: true,
-          noiseSuppression: true
+          noiseSuppression: true,
+          autoGainControl: true
         } as any
       });
       
@@ -264,6 +267,7 @@ export class WebRTCService {
       
       const updateStream = () => {
         if (this.remoteStream) {
+          console.log("Signaling stream update to UI...");
           // Pass a new MediaStream object to force React to update its state
           // but reuse the existing tracks to avoid re-negotiation
           onRemoteStream(new MediaStream(this.remoteStream.getTracks()));
