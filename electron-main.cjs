@@ -24,13 +24,26 @@ function createWindow() {
   // Importante para permitir o getDisplayMedia no Electron
   mainWindow.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-      // Por defeito, escolhemos o primeiro ecrã (Primary Screen) para simplificar no .exe
-      if (sources.length > 0) {
-        callback({ video: sources[0], audio: 'loopback' });
+      if (sources && sources.length > 0) {
+        // Encontra o ecrã principal ou o primeiro disponível
+        const primarySource = sources.find(s => s.name.toLowerCase().includes('entire')) || sources[0];
+        callback({ video: primarySource, audio: 'loopback' });
       } else {
         console.error("Nenhuma fonte de ecrã encontrada");
+        callback({}); // Cancela graciosamente
       }
+    }).catch(err => {
+      console.error("Erro ao obter fontes:", err);
+      callback({});
     });
+  });
+
+  // Listener para inputs remotos (usado futuramente para controlo real do rato via RobotJS ou similar)
+  // Nota: Requer integração de biblioteca nativa para mover o rato do sistema
+  mainWindow.webContents.on('ipc-message', (event, channel, ...args) => {
+    if (channel === 'remote-input') {
+       // console.log('Input remoto recebido no Main:', args[0]);
+    }
   });
 
   // Em desenvolvimento, carrega o servidor local

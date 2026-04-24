@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Maximize2, Keyboard, MousePointer2, MessageSquare, Shield, Info, Send, FileUp, Paperclip, Loader2, Monitor, Lock, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WebRTCService } from '../services/webrtcService';
@@ -39,9 +39,27 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
   const [isApproved, setIsApproved] = useState(true);
   const [hasNewRequest, setHasNewRequest] = useState(false);
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
+  const [remoteCursor, setRemoteCursor] = useState<{x: number, y: number} | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const rtcServiceRef = useRef<WebRTCService | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleRemoteInput = (e: any) => {
+      if (!isHost) return;
+      const data = e.detail;
+      if (data.type === 'mouse') {
+        setRemoteCursor({ x: data.x, y: data.y });
+        // Clear cursor after 1s of inactivity
+        const timer = (window as any)._cursorTimer;
+        if (timer) clearTimeout(timer);
+        (window as any)._cursorTimer = setTimeout(() => setRemoteCursor(null), 1000);
+      }
+    };
+
+    window.addEventListener('remote-input', handleRemoteInput);
+    return () => window.removeEventListener('remote-input', handleRemoteInput);
+  }, [isHost]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -257,6 +275,57 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
       console.error("Viewing failed:", err);
       setConnectionStatus('Erro na sincronização. Tente de novo.');
       setHasError(true);
+    }
+  };
+
+  const handleVideoInteraction = (e: React.MouseEvent) => {
+    if (isHost || !rtcServiceRef.current || isConnecting || hasError) return;
+    
+    const video = videoRef.current;
+    if (!video) return;
+
+    const rect = video.getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+
+    // Rendered video size
+    const cw = video.clientWidth;
+    const ch = video.clientHeight;
+    // Intrinsic video size
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    
+    if (!vw || !vh) return;
+
+    // Scale to fit (contain) logic to find exactly where the video pixels are
+    const vRatio = vw / vh;
+    const cRatio = cw / ch;
+
+    let actualW, actualH, offX = 0, offY = 0;
+    if (cRatio > vRatio) {
+      actualH = ch;
+      actualW = ch * vRatio;
+      offX = (cw - actualW) / 2;
+    } else {
+      actualW = cw;
+      actualH = cw / vRatio;
+      offY = (ch - actualH) / 2;
+    }
+
+    // Normalized coordinates (0 to 1) relative to video content
+    const nx = (x - rect.left - offX) / actualW;
+    const ny = (y - rect.top - offY) / actualH;
+
+    // Only send if within the actual video frame
+    if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+      console.log("Sending normalized mouse event:", nx.toFixed(3), ny.toFixed(3));
+      rtcServiceRef.current.sendInput({
+        type: 'mouse',
+        action: e.type === 'mousedown' ? 'mousedown' : e.type === 'mouseup' ? 'mouseup' : 'move',
+        x: nx,
+        y: ny,
+        button: e.button
+      });
     }
   };
 
@@ -519,8 +588,26 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
               playsInline
               // Mute by default to ensure browser allows autoplay
               muted
-              onLoadedMetadata={() => videoRef.current?.play()}
-              className={`w-full h-full object-contain bg-[#0a0a0a] ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
+              onLoadedMetadata={(e) => {
+                const video = e.currentTarget;
+                video.play().catch(console.error);
+                // Força layout refresh para evitar bugs de ecrã preto em alguns browsers shell
+                video.style.transform = 'scale(1)';
+              }}
+              onMouseDown={handleVideoInteraction}
+              onMouseUp={handleVideoInteraction}
+              onMouseMove={(e) => {
+                // Throttling basic implementation via timestamp
+                if (!(window as any)._lastMove || Date.now() - (window as any)._lastMove > 50) {
+                  handleVideoInteraction(e);
+                  (window as any)._lastMove = Date.now();
+                }
+              }}
+              onContextMenu={(e) => {
+                 e.preventDefault();
+                 handleVideoInteraction(e);
+              }}
+              className={`w-full h-full object-contain bg-[#0a0a0a] cursor-crosshair ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
             />
 
             {isHost && showCaptureTip && (
@@ -536,6 +623,22 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
                   </p>
                 </div>
               </motion.div>
+            )}
+
+            {isHost && remoteCursor && (
+              <div 
+                className="absolute w-6 h-6 border-2 border-red-500 rounded-full pointer-events-none z-[200] shadow-[0_0_10px_rgba(239,68,68,0.5)]"
+                style={{ 
+                  left: `${remoteCursor.x * 100}%`, 
+                  top: `${remoteCursor.y * 100}%`,
+                  transform: 'translate(-50%, -50%)'
+                }}
+              >
+                <div className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-20"></div>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-red-500 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
+                  Remote Pointer
+                </div>
+              </div>
             )}
 
             {activeStream && activeStream.getTracks().length === 0 && !isConnecting && (

@@ -36,9 +36,32 @@ export class WebRTCService {
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private iceQueue: RTCIceCandidateInit[] = [];
+  private dataChannel: RTCDataChannel | null = null;
 
   constructor() {
     // We'll create the PC in the start methods to ensure a fresh one
+  }
+
+  // Envia um comando de input para o par remoto
+  sendInput(data: any) {
+    if (this.dataChannel && this.dataChannel.readyState === 'open') {
+      this.dataChannel.send(JSON.stringify(data));
+    }
+  }
+
+  private setupDataChannel(channel: RTCDataChannel, isHost: boolean) {
+    this.dataChannel = channel;
+    this.dataChannel.onopen = () => console.log(`DataChannel (${isHost ? 'Host' : 'Viewer'}) is open`);
+    this.dataChannel.onclose = () => console.log(`DataChannel (${isHost ? 'Host' : 'Viewer'}) is closed`);
+    this.dataChannel.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        // Despacha evento custom para ser apanhado pelo componente ou Electron
+        window.dispatchEvent(new CustomEvent('remote-input', { detail: data }));
+      } catch (e) {
+        console.error("Error parsing input message:", e);
+      }
+    };
   }
 
   private createPeerConnection(onStateChange?: (state: string) => void) {
@@ -161,6 +184,11 @@ export class WebRTCService {
       }
     };
 
+    // Host listens for data channel created by viewer
+    this.pc.ondatachannel = (event) => {
+      this.setupDataChannel(event.channel, true);
+    };
+
     this.pc.ontrack = (event) => {
       if (event.streams && event.streams[0]) {
         this.remoteStream = event.streams[0];
@@ -263,6 +291,10 @@ export class WebRTCService {
     this.createPeerConnection(onStateChange);
     
     if (!this.pc) throw new Error("Failed to create PeerConnection");
+
+    // Viewer creates the data channel
+    const channel = this.pc.createDataChannel('input-channel', { ordered: true });
+    this.setupDataChannel(channel, false);
 
     this.iceQueue = [];
 
