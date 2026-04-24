@@ -187,16 +187,28 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
       }
     } catch (err: any) {
       console.error("Session failed:", err);
-      const errorMsg = err.message || 'Erro de rede ou permissão';
-      setConnectionStatus('Aviso: ' + errorMsg);
+      let errorMsg = err.message || 'Erro de rede ou permissão';
+      
+      // Melhora mensagens comuns
+      if (errorMsg.includes('getDisplayMedia') || errorMsg.includes('MediaDevices')) {
+        errorMsg = "Ambiente sem suporte a Captura. Nota: Algumas apps/wrappers bloqueiam esta funcão. Tente usar no Chrome/Edge oficial.";
+      }
+      
+      setConnectionStatus('Erro: ' + errorMsg);
       setHasError(true);
       
-      // Se for erro de permissão de ecrã, fechamos. Se for rede, deixamos o Firebase tentar.
-      if (errorMsg.includes('Captura')) {
-        setTimeout(onClose, 5000);
-      }
+      console.log("Final error shown to user:", errorMsg);
     }
   };
+
+  const [showCaptureTip, setShowCaptureTip] = useState(false);
+  useEffect(() => {
+    if (isHost && !isConnecting && !hasError) {
+      setShowCaptureTip(true);
+      const timer = setTimeout(() => setShowCaptureTip(false), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [isHost, isConnecting, hasError]);
 
   const initiateViewerFlow = (onState: (state: string) => void) => {
     onSnapshot(doc(db, 'remote_sessions', remoteId), (snap) => {
@@ -510,6 +522,21 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
               onLoadedMetadata={() => videoRef.current?.play()}
               className={`w-full h-full object-contain bg-[#0a0a0a] ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
             />
+
+            {isHost && showCaptureTip && (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="absolute top-32 left-1/2 -translate-x-1/2 z-[150] w-full max-w-xs text-center"
+              >
+                <div className="bg-blue-600/20 border border-blue-500/30 backdrop-blur-md p-4 rounded-2xl shadow-xl">
+                  <p className="text-[10px] text-blue-100 uppercase font-black tracking-widest leading-relaxed">
+                    DICA: Para evitar o efeito de "tunel de telas", minimize esta janela ou escolha um ecrã diferente na captura.
+                  </p>
+                </div>
+              </motion.div>
+            )}
 
             {activeStream && activeStream.getTracks().length === 0 && !isConnecting && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

@@ -53,16 +53,20 @@ export class WebRTCService {
 
     console.log("Creating PeerConnection...");
     try {
-      // Use the global RTCPeerConnection constructor directly to avoid any proxy/context issues
+      // Diagnostic check
+      const rtcSupported = typeof window !== 'undefined' && 
+        (!!window.RTCPeerConnection || !!(window as any).webkitRTCPeerConnection || !!(window as any).mozRTCPeerConnection);
+
+      if (!rtcSupported) {
+        const contextMsg = !window.isSecureContext ? " (O contexto não é seguro - requer HTTPS ou Localhost)" : "";
+        throw new Error(`WebRTC (PeerConnection) não é suportado neste ambiente${contextMsg}.`);
+      }
+
       if (typeof window.RTCPeerConnection !== 'undefined') {
         this.pc = new RTCPeerConnection(servers);
       } else {
         const vendorRTC = (window as any).webkitRTCPeerConnection || (window as any).mozRTCPeerConnection;
-        if (vendorRTC) {
-          this.pc = new vendorRTC(servers);
-        } else {
-          throw new Error("RTCPeerConnection not supported");
-        }
+        this.pc = new vendorRTC(servers);
       }
       
       this.pc.onconnectionstatechange = () => {
@@ -165,6 +169,17 @@ export class WebRTCService {
     };
 
     try {
+      console.log("Checking capture capabilities...");
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+        const contextMsg = typeof window !== 'undefined' && !window.isSecureContext ? 
+          "Requer context seguro (HTTPS/Localhost)." : "Navegador antigo ou sem permissões.";
+        throw new Error(`MediaDevices não disponível: ${contextMsg}`);
+      }
+
+      if (!navigator.mediaDevices.getDisplayMedia) {
+        throw new Error("A API getDisplayMedia (Captura de Ecrã) não é suportada neste ambiente.");
+      }
+
       console.log("Requesting screen capture...");
       this.localStream = await navigator.mediaDevices.getDisplayMedia({
         video: { 
@@ -172,7 +187,9 @@ export class WebRTCService {
           displaySurface: "monitor",
           frameRate: { ideal: 30, max: 60 },
           width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          height: { ideal: 1080 },
+          // Tenta evitar o efeito de túnel/espelho se o utilizador capturar o próprio browser
+          selfBrowserSurface: "exclude"
         } as any,
         audio: {
           echoCancellation: true,

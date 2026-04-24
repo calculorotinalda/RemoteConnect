@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, desktopCapturer, session } = require('electron');
 const path = require('path');
 
 function createWindow() {
@@ -14,9 +14,23 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      // Habilita APIs de media se necessário para alguns contextos
+      sandbox: false 
     },
     backgroundColor: '#0F1115',
     titleBarStyle: 'hiddenInset'
+  });
+
+  // Importante para permitir o getDisplayMedia no Electron
+  mainWindow.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      // Por defeito, escolhemos o primeiro ecrã (Primary Screen) para simplificar no .exe
+      if (sources.length > 0) {
+        callback({ video: sources[0], audio: 'loopback' });
+      } else {
+        console.error("Nenhuma fonte de ecrã encontrada");
+      }
+    });
   });
 
   // Em desenvolvimento, carrega o servidor local
