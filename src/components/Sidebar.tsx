@@ -1,4 +1,4 @@
-import { Server, History, RefreshCcw, ShieldCheck, Settings } from 'lucide-react';
+import { Server, History, RefreshCcw, ShieldCheck, Settings, Zap } from 'lucide-react';
 import { NavigationItem } from '../types';
 
 interface SidebarProps {
@@ -8,6 +8,7 @@ interface SidebarProps {
 
 export default function Sidebar({ activeItem, onItemSelect }: SidebarProps) {
   const items = [
+    { id: 'connect', label: 'Connect', icon: Zap },
     { id: 'devices', label: 'Devices', icon: Server },
     { id: 'history', label: 'History', icon: History },
     { id: 'network', label: 'Network', icon: RefreshCcw },

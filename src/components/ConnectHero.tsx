@@ -39,24 +39,29 @@ export default function ConnectHero({ onSessionStart, onHostStart }: ConnectHero
 
   const handleConnect = () => {
     const cleanId = remoteId.replace(/[- ]/g, '');
+    const myCleanId = myDeskId.replace(/[- ]/g, '');
     if (!cleanId.trim()) return;
     
     setStatus('connecting');
     
-    // Simulate a connection process
+    // Quick validation and start
     setTimeout(() => {
       if (cleanId.length < 5) {
         setStatus('error');
-        setTimeout(() => setStatus('idle'), 3000);
+        setTimeout(() => setStatus('idle'), 2000);
       } else {
         setStatus('connected');
         setTimeout(() => {
-          onSessionStart(cleanId);
+          if (cleanId === myCleanId) {
+            onHostStart(cleanId);
+          } else {
+            onSessionStart(cleanId);
+          }
           setStatus('idle');
           setRemoteId('');
-        }, 1500);
+        }, 300); // 300ms is enough for visual feedback
       }
-    }, 2000);
+    }, 500); // 500ms for "Wait" state
   };
 
   const startHostSession = () => {

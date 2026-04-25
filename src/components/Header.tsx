@@ -17,6 +17,12 @@ export default function Header({ activeItem, onItemSelect }: HeaderProps) {
         
         <div className="hidden md:flex gap-8">
           <button 
+            onClick={() => onItemSelect('connect')}
+            className={`text-[10px] font-black tracking-[0.1em] uppercase transition-all pb-5 pt-1 border-b-2 cursor-pointer ${activeItem === 'connect' ? 'text-red-500 border-red-500' : 'opacity-30 border-transparent hover:opacity-100'}`}
+          >
+            Direct Connect
+          </button>
+          <button 
             onClick={() => onItemSelect('devices')}
             className={`text-[10px] font-black tracking-[0.1em] uppercase transition-all pb-5 pt-1 border-b-2 cursor-pointer ${activeItem === 'devices' ? 'text-red-500 border-red-500' : 'opacity-30 border-transparent hover:opacity-100'}`}
           >

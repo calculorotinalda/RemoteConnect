@@ -13,8 +13,9 @@ import { Device, NavigationItem } from './types';
 const MOCK_DEVICES: Device[] = [];
 
 export default function App() {
-  const [activeItem, setActiveItem] = useState<NavigationItem>('devices');
+  const [activeItem, setActiveItem] = useState<NavigationItem>('connect');
   const [activeSession, setActiveSession] = useState<{ id: string; isHost: boolean } | null>(null);
+  const [hostingId, setHostingId] = useState<string | null>(null);
   const [isUnattendedActive, setIsUnattendedActive] = useState(false);
   const myCurrentIdRef = useRef<string>('');
 
@@ -50,6 +51,14 @@ export default function App() {
     setActiveSession({ id, isHost });
   };
 
+  const startHosting = (id: string) => {
+    setHostingId(id);
+  };
+
+  const stopHosting = () => {
+    setHostingId(null);
+  };
+
   const closeSession = () => {
     setActiveSession(null);
   };
@@ -68,11 +77,16 @@ export default function App() {
 
       <main className="md:ml-20 pt-24 pb-24 md:pb-20 px-4 md:px-12 max-w-none">
         <div className="max-w-7xl mx-auto">
+          {activeItem === 'connect' && (
+            <ConnectHero 
+              onSessionStart={(id) => startSession(id, false)} 
+              onHostStart={startHosting} 
+            />
+          )}
+
           {activeItem === 'devices' && (
             <>
-              <ConnectHero onSessionStart={(id) => startSession(id, false)} onHostStart={(id) => startSession(id, true)} />
-
-              <section className="mt-12">
+              <section>
                 <div className="flex items-center justify-between mb-8 border-b border-white/5 pb-4">
                   <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Recent Sessions</h2>
                   <div className="flex gap-4">
@@ -132,6 +146,13 @@ export default function App() {
             remoteId={activeSession.id} 
             isHost={activeSession.isHost}
             onClose={closeSession} 
+          />
+        )}
+        {hostingId && (
+          <RemoteSessionView 
+            remoteId={hostingId} 
+            isHost={true}
+            onClose={stopHosting} 
           />
         )}
       </AnimatePresence>

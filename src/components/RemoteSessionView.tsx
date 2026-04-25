@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Maximize2, Keyboard, MousePointer2, MessageSquare, Shield, Info, Send, FileUp, Paperclip, Loader2, Monitor, Lock, CheckCircle2 } from 'lucide-react';
+import { X, Maximize2, Keyboard, MousePointer2, MessageSquare, Shield, Info, Send, FileUp, Paperclip, Loader2, Monitor, Lock, CheckCircle2, RefreshCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WebRTCService } from '../services/webrtcService';
 import { db, validateFirestoreConnection } from '../lib/firebase';
@@ -40,6 +40,7 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
   const [hasNewRequest, setHasNewRequest] = useState(false);
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const [remoteCursor, setRemoteCursor] = useState<{x: number, y: number} | null>(null);
+  const [showHostPreview, setShowHostPreview] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const rtcServiceRef = useRef<WebRTCService | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -99,6 +100,18 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
       });
     }
   }, [activeStream]);
+
+  useEffect(() => {
+    if (activeStream && videoRef.current) {
+      const timer = setTimeout(() => {
+        if (videoRef.current && videoRef.current.videoWidth === 0 && !isConnecting && !hasError) {
+          console.log("Auto-syncing black stream...");
+          handleSyncFlux();
+        }
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [activeStream, isConnecting, hasError]);
 
   const [trackUpdate, setTrackUpdate] = useState(0);
   useEffect(() => {
@@ -268,6 +281,16 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
         setActiveStream(stream);
         setIsConnecting(false);
         setConnectionStatus('Ligação ativa!');
+
+        // Monitor track status
+        stream.getTracks().forEach(track => {
+          track.onended = () => {
+            console.warn("Remote track ended:", track.kind);
+            setHasError(true);
+          };
+          track.onmute = () => console.log("Remote track muted:", track.kind);
+          track.onunmute = () => console.log("Remote track unmuted:", track.kind);
+        });
       }, onStateChange);
       
       setConnectionStatus('Sincronizando túnel P2P...');
@@ -288,37 +311,42 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
     const x = e.clientX;
     const y = e.clientY;
 
-    // Rendered video size
-    const cw = video.clientWidth;
-    const ch = video.clientHeight;
-    // Intrinsic video size
+    // Rendered video size (visual)
+    const cw = video.offsetWidth;
+    const ch = video.offsetHeight;
+    
+    // Intrinsic video size (actual pixels)
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     
-    if (!vw || !vh) return;
+    if (!vw || !vh || !cw || !ch) return;
 
-    // Scale to fit (contain) logic to find exactly where the video pixels are
+    // Scale to fit (contain) logic exactly as browser renders it
     const vRatio = vw / vh;
     const cRatio = cw / ch;
 
     let actualW, actualH, offX = 0, offY = 0;
     if (cRatio > vRatio) {
+      // Container is wider than video, height is fixed
       actualH = ch;
       actualW = ch * vRatio;
       offX = (cw - actualW) / 2;
     } else {
+      // Container is taller than video, width is fixed
       actualW = cw;
       actualH = cw / vRatio;
       offY = (ch - actualH) / 2;
     }
 
-    // Normalized coordinates (0 to 1) relative to video content
-    const nx = (x - rect.left - offX) / actualW;
-    const ny = (y - rect.top - offY) / actualH;
+    // Normalized coordinates (0 to 1) relative to THE CONTENT area only
+    const relativeX = x - rect.left - offX;
+    const relativeY = y - rect.top - offY;
+    
+    const nx = Math.max(0, Math.min(1, relativeX / actualW));
+    const ny = Math.max(0, Math.min(1, relativeY / actualH));
 
-    // Only send if within the actual video frame
-    if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
-      console.log("Sending normalized mouse event:", nx.toFixed(3), ny.toFixed(3));
+    // Only send if within the actual video frame bounds
+    if (relativeX >= 0 && relativeX <= actualW && relativeY >= 0 && relativeY <= actualH) {
       rtcServiceRef.current.sendInput({
         type: 'mouse',
         action: e.type === 'mousedown' ? 'mousedown' : e.type === 'mouseup' ? 'mouseup' : 'move',
@@ -370,6 +398,22 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
       };
       setMessages(prev => [...prev, reply]);
     }, 1500);
+  };
+
+  const handleSyncFlux = async () => {
+    const video = videoRef.current;
+    if (video && activeStream) {
+      console.log("Applying hard sync to stream...");
+      try {
+        video.srcObject = null;
+        await new Promise(r => setTimeout(r, 100));
+        video.srcObject = activeStream;
+        await video.play();
+        setTrackUpdate(p => p + 1);
+      } catch (e) {
+        console.warn("Sync failed:", e);
+      }
+    }
   };
 
   const simulateUpload = () => {
@@ -428,13 +472,37 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-white/5 rounded-lg border border-white/5">
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-white/5 rounded-lg border border-white/5">
             <Shield className="w-3 h-3 text-red-500" />
             <span className="text-[9px] font-bold text-white/40 uppercase tracking-widest leading-none">Encrypted</span>
           </div>
+          
+          <div className="flex items-center gap-2">
+            {!isConnecting && !hasError && (
+              <button 
+                onClick={handleSyncFlux}
+                className="flex items-center gap-2 px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 border border-red-600/20 rounded-lg text-red-500 transition-all group"
+                title="Sincronizar vídeo caso esteja preto"
+              >
+                <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping"></div>
+                <span className="text-[9px] font-black uppercase tracking-widest">Sincronizar Fluxo</span>
+              </button>
+            )}
+
+            {isHost && (
+              <button 
+                onClick={() => setShowHostPreview(!showHostPreview)}
+                className={`p-2 rounded-lg border transition-all ${showHostPreview ? 'border-white/10 text-white/40 hover:text-white' : 'border-blue-500/50 bg-blue-500/10 text-blue-500'}`}
+                title={showHostPreview ? "Ocultar pré-visualização (Evita efeito garrafão)" : "Mostrar pré-visualização"}
+              >
+                {showHostPreview ? <Monitor className="w-4 h-4" /> : <div className="relative"><Monitor className="w-4 h-4" /><div className="absolute inset-0 flex items-center justify-center"><div className="w-full h-0.5 bg-blue-500 rotate-45 transform"></div></div></div>}
+              </button>
+            )}
+          </div>
+
           <button 
             onClick={onClose}
-            className="p-2 rounded-lg bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white transition-all"
+            className="p-2 rounded-lg bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white transition-all ml-2"
           >
             <X className="w-4 h-4" />
           </button>
@@ -597,7 +665,6 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
               onMouseDown={handleVideoInteraction}
               onMouseUp={handleVideoInteraction}
               onMouseMove={(e) => {
-                // Throttling basic implementation via timestamp
                 if (!(window as any)._lastMove || Date.now() - (window as any)._lastMove > 50) {
                   handleVideoInteraction(e);
                   (window as any)._lastMove = Date.now();
@@ -607,8 +674,16 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
                  e.preventDefault();
                  handleVideoInteraction(e);
               }}
-              className={`w-full h-full object-contain bg-[#0a0a0a] cursor-crosshair ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
+              className={`w-full h-full object-contain bg-[#0a0a0a] cursor-crosshair ${(isHost && !showHostPreview) ? 'hidden' : ''} ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
             />
+
+            {isHost && !showHostPreview && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/40 backdrop-blur-md">
+                <Shield className="w-12 h-12 text-blue-500 mb-4 opacity-50" />
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Modo Anti-Garrafão Ativo</p>
+                <p className="text-[8px] text-white/30 uppercase mt-2">A transmitir ecrã silenciosamente...</p>
+              </div>
+            )}
 
             {isHost && showCaptureTip && (
               <motion.div 
@@ -638,6 +713,30 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
                 <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-red-500 text-white text-[8px] font-black uppercase px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
                   Remote Pointer
                 </div>
+              </div>
+            )}
+
+            {activeStream && !isConnecting && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                {videoRef.current && videoRef.current.videoWidth === 0 && (
+                  <motion.button 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSyncFlux();
+                    }}
+                    className="pointer-events-auto flex flex-col items-center gap-4 p-8 bg-black/60 backdrop-blur-xl border border-white/10 rounded-3xl group hover:border-red-500/50 transition-all shadow-2xl"
+                  >
+                    <div className="w-16 h-16 rounded-full bg-red-600/20 flex items-center justify-center border border-red-600/30 group-hover:scale-110 transition-all">
+                      <RefreshCcw className="w-8 h-8 text-red-500 group-hover:rotate-180 transition-all duration-700" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-white font-black uppercase tracking-widest text-xs">Imagem Preta detetada</p>
+                      <p className="text-white/40 text-[10px] uppercase mt-1 tracking-wider">Clique para forçar sincronização de fluxo</p>
+                    </div>
+                  </motion.button>
+                )}
               </div>
             )}
 

@@ -208,36 +208,34 @@ export class WebRTCService {
         throw new Error("A API getDisplayMedia (Captura de Ecrã) não é suportada neste ambiente.");
       }
 
-      console.log("Requesting screen capture...");
-      this.localStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { 
-          cursor: "always",
-          displaySurface: "monitor",
-          frameRate: { ideal: 30, max: 60 },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          // Tenta evitar o efeito de túnel/espelho se o utilizador capturar o próprio browser
-          selfBrowserSurface: "exclude"
-        } as any,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        } as any
-      });
-      
-      if (!this.localStream || this.localStream.getTracks().length === 0) {
-        throw new Error("Nenhum sinal capturado. Verifique as permissões do navegador.");
-      }
-
-      console.log("Capture granted, tracks:", this.localStream.getTracks().map(t => `${t.kind}:${t.enabled}`));
-      
-      this.localStream.getTracks().forEach(t => {
-        if (this.pc) {
-          console.log(`Adding ${t.kind} track to PC...`);
-          this.pc.addTrack(t, this.localStream!);
+        console.log("Requesting screen capture...");
+        this.localStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { 
+            cursor: "always",
+            displaySurface: "monitor",
+            frameRate: { ideal: 30, max: 60 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } as any,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } as any
+        });
+        
+        if (!this.localStream || this.localStream.getTracks().length === 0) {
+          throw new Error("Nenhum sinal capturado. Verifique as permissões do navegador.");
         }
-      });
+
+        console.log("Capture granted, tracks:", this.localStream.getTracks().map(t => `${t.kind}:${t.enabled}`));
+        
+        this.localStream.getTracks().forEach(t => {
+          if (this.pc) {
+            console.log(`Adding ${t.kind} track to PC...`);
+            this.pc.addTrack(t, this.localStream!);
+          }
+        });
 
       // Monitor stream health
       this.localStream.getTracks().forEach(t => {
