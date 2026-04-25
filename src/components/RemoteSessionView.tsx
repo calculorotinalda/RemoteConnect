@@ -302,7 +302,14 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
   };
 
   const handleVideoInteraction = (e: React.MouseEvent) => {
-    if (isHost || !rtcServiceRef.current || isConnecting || hasError) return;
+    if (!rtcServiceRef.current || isConnecting || hasError) return;
+    
+    // For Host mode, we normally don't send inputs to ourselves to avoid loops, 
+    // but for self-connection testing we can allow it if the user clicks.
+    if (isHost) {
+      console.log("Interaction ignored in host mode to prevent loops.");
+      return;
+    }
     
     const video = videoRef.current;
     if (!video) return;
@@ -674,11 +681,11 @@ export default function RemoteSessionView({ remoteId, onClose, isHost = false }:
                  e.preventDefault();
                  handleVideoInteraction(e);
               }}
-              className={`w-full h-full object-contain bg-[#0a0a0a] cursor-crosshair ${(isHost && !showHostPreview) ? 'hidden' : ''} ${isHost ? 'opacity-30 grayscale blur-sm' : ''}`}
+              className={`w-full h-full object-contain bg-[#0a0a0a] cursor-crosshair ${(isHost && !showHostPreview) ? 'hidden' : ''} ${isHost ? 'opacity-100 transition-opacity' : ''}`}
             />
 
             {isHost && !showHostPreview && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/40 backdrop-blur-md">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/40 backdrop-blur-md pointer-events-none">
                 <Shield className="w-12 h-12 text-blue-500 mb-4 opacity-50" />
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Modo Anti-Garrafão Ativo</p>
                 <p className="text-[8px] text-white/30 uppercase mt-2">A transmitir ecrã silenciosamente...</p>
